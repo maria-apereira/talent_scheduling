@@ -10,8 +10,8 @@ Pipeline:
      to standard output.
 
 Usage:
-    python3 proj.py --instance data/example_instance.json --model extended
-    python3 proj.py --instance data/example_instance.json --model base
+    python3 proj.py --instance data/example.json --model extended
+    python3 proj.py --instance data/example.json --model base
 """
 
 import argparse
@@ -67,7 +67,7 @@ def run_minizinc(model_path: Path, dzn_path: Path, solver: str = "gecode") -> st
     # -G std avoids a known packaging mismatch on some systems where a
     # solver's bundled global-constraint redefinitions (e.g. Gecode's)
     # are out of sync with the installed MiniZinc standard library.
-    cmd = ["minizinc", "-G", "std", "--solver", solver, str(model_path), str(dzn_path)]
+    cmd = ["minizinc", "-G", "std", "--solver", solver, "--time-limit", "1800000", str(model_path), str(dzn_path)]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         print("MiniZinc failed:", result.stderr, file=sys.stderr)
@@ -142,6 +142,7 @@ def main():
 
     try:
         raw_output = run_minizinc(model_path, dzn_path, args.solver)
+        print(raw_output, file=sys.stderr)
         fields = parse_output(raw_output)
         print_schedule(instance, args.model, fields)
     finally:

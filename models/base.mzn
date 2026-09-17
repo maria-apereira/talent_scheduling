@@ -1,23 +1,18 @@
 % =====================================================================
-% Talent Scheduling Problem - EXTENDED model 
+% Talent Scheduling Problem (CSPLib prob039) - Base model 
 % =====================================================================
 
 include "globals.mzn";
 
 int: numScenes;
 int: numActors;
-int: numLocations;
 
 set of int: Scenes = 1..numScenes;
 set of int: Actors = 1..numActors;
-set of int: Locations = 1..numLocations;
 
 array[Actors, Scenes] of 0..1: ia;
 array[Scenes] of int: d;
 array[Actors] of int: c;
-
-array[Scenes] of Locations: loc;
-array[Locations, Locations] of int: travel;
 
 array[Scenes] of var Scenes: seq;
 constraint all_different(seq);
@@ -41,44 +36,35 @@ constraint forall(a in Actors)(
     lastSlot[a]  = max([ if presentAt[a,i] = 1 then i else 0 endif | i in Scenes ])
 );
 
+array[Actors] of int: workDur = [ sum(i in Scenes)(ia[a,i]*d[i]) | a in Actors ];
 array[Actors] of var int: actorCost;
 constraint forall(a in Actors)(
-    actorCost[a] = c[a] * (cumDur[lastSlot[a]] - cumDur[firstSlot[a]-1])
+    actorCost[a] = c[a] * (cumDur[lastSlot[a]] - cumDur[firstSlot[a]-1] - workDur[a])
 );
 
-var int: totalActorCost = sum(a in Actors)(actorCost[a]);
-
-array[Scenes] of var Locations: locAt;
-constraint forall(i in Scenes)(
-    locAt[i] = loc[seq[i]]
-);
-
-array[1..numScenes-1] of var int: travelCost;
-constraint forall(i in 1..numScenes-1)(
-    travelCost[i] = travel[locAt[i], locAt[i+1]]
-);
-
-var int: totalTravelCost = sum(i in 1..numScenes-1)(travelCost[i]);
-
-var int: totalCost = totalActorCost + totalTravelCost;
+var int: totalCost = sum(a in Actors)(actorCost[a]);
 
 % -------------------- Added optimizations --------------------------
+% number of scenes each actor appears in (fixed data, computable up front)
 array[Actors] of int: nAppear = [ sum(i in Scenes)(ia[a,i]) | a in Actors ];
+
+% redundant/implied constraint (Barbara Smith): an actor's span can never
+% be shorter than (appearances - 1) scenes
 constraint forall(a in Actors)(
     lastSlot[a] - firstSlot[a] >= nAppear[a] - 1
 );
 
+% symmetry breaking: schedule and its mirror are equally good, so we
+% break the reflection symmetry by fixing an ordering on the endpoints
+constraint seq[1] < seq[numScenes];
 
 solve :: int_search(seq, first_fail, indomain_min, complete)
     minimize totalCost;
 
 output [
   "ORDER=", show(seq), "\n",
-  "LOCATIONS=", show(locAt), "\n",
   "FIRSTSLOT=", show(firstSlot), "\n",
   "LASTSLOT=", show(lastSlot), "\n",
   "ACTORCOST=", show(actorCost), "\n",
-  "TOTAL_ACTOR_COST=", show(totalActorCost), "\n",
-  "TOTAL_TRAVEL_COST=", show(totalTravelCost), "\n",
   "TOTALCOST=", show(totalCost), "\n"
 ];
