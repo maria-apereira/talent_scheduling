@@ -15,19 +15,34 @@ idle cost can scatter locations and raise travel cost, and vice versa.
 
 ## Requirements
 - Python 3.12
-- MiniZinc 2.10.1 recommended (developed/tested here against 2.8.2 with
-  Gecode 6.2.0; see note below if you hit a solver error)
-- Gecode solver (bundled with the MiniZinc bundled distribution, or
-  `apt install minizinc` on Ubuntu)
+- MiniZinc 2.10.1 (final tests run with the official standalone bundle
+  from minizinc.org / GitHub releases; the Ubuntu `apt` package is 2.5.3)
+- Chuffed solver (default; bundled with MiniZinc). Gecode also works via
+  `--solver gecode` but is much slower on this problem (see Results).
 
 ## Usage
 ```bash
-python3 proj.py --instance data/example_instance.json --model base
-python3 proj.py --instance data/example_instance.json --model extended
+python3 proj.py --instance data/film2.json --model base
+python3 proj.py --instance data/tradeoff_demo.json --model extended
 ```
 
-`--model base` runs the unmodified CSPLib prob039 model.
+`--model base` runs the CSPLib prob039 model (our own encoding, with
+symmetry breaking and a redundant constraint).
 `--model extended` runs our location/travel extension.
+
+Options: `--solver` (default `chuffed`), `--time-limit` in seconds
+(default 60), `--verbose` (raw solver output on stderr), `--std-globals`
+(passes `-G std`; only needed for a globals type error on some apt
+installs). The last line of the output says whether the result is proved
+optimal or just the best found within the time limit.
+
+After solving, `proj.py` recomputes the schedule's cost in plain Python
+(independently of MiniZinc) and checks it against the solver's value; a
+mismatch aborts with exit code 3.
+
+Suggested demo (fast): `data/tradeoff_demo.json` (proved optimal in 0.2 s)
+and `data/film2.json --model base` (proves 87 in ~40 s; use
+`--time-limit 90`).
 
 ## Instance format (JSON)
 ```json
@@ -76,37 +91,18 @@ section honestly:
 - **Validated against the official CSPLib prob039 instances.** We ran
   `base.mzn` on the published Film1 and Film2 talent-scheduling instances
   (not the synthetic instances used for the performance benchmarks below).
-  Film2 (13 scenes, 10 actors) proves optimal at **87** (×100 = 8700),
-  matching the published optimum exactly. Film1 (20 scenes, 8 actors)
-  We also verified our cost formulation against the synthetic instances
+  Film2 (13 scenes, 10 actors) proves optimal at **87** (×100 = 8700)
+  with Chuffed in ~40 s, matching the published optimum exactly (Gecode
+  does not prove it: best 130 after 2 min). Film1 (20 scenes, 8 actors)
+  was not proved optimal (best found 210 in 150 s with Chuffed). We also verified our cost formulation against the synthetic instances
   used in the symmetry-breaking/search benchmarks below (373, 617, 823 on
   5/7/8-scene synthetic instances) — those instances aren't from CSPLib,
   so use the Film1/Film2 numbers above as the authoritative correctness check.
-- **Different performance — ours is notably slower.** `talent_scheduling_alt.mzn`
-  adds symmetry breaking (`s[1] < s[numScenes]`), Barbara Smith's
-  redundant constraints on wait times and scene ordering, and a custom
-  search annotation (`int_search(s, first_fail, indomain, complete)`).
-  Our `base.mzn` has none of these. Benchmarked with Gecode 6.2.0 on
-  synthetic instances:
-
-  | Instance | Our `base.mzn` | `talent_scheduling_alt.mzn` |
-  |---|---|---|
-  | 8 scenes, 4 actors | 3.77 s (proven optimal) | 0.002 s (proven optimal) |
-  | 12 scenes, 6 actors | timeout at 30 s (best found: 3760) | 0.13 s (proven optimal: 2287) |
-  | 16 scenes, 8 actors | timeout at 30 s (4288) | timeout at 30 s (3242) |
-  | 20 scenes, 9 actors | timeout at 30 s (7060) | timeout at 30 s (6275) |
-
-  Adding just the symmetry-breaking constraint to our model helps
-  (3760 → 2630 on the 12-scene instance) but does not close the gap on
-  its own — the combination of redundant constraints and search
-  strategy is what makes the reference model scale better.
-
-**Takeaway for the writeup:** our model is correct (matches the reference
-model's optimal costs wherever both can be checked) but not as
-search-efficient at larger sizes, since we did not add symmetry breaking,
-redundant constraints, or a custom search strategy. This is a known
-trade-off in CP modelling (declarative clarity vs. solver-guided
-performance) worth naming explicitly rather than hiding.
+- **Performance depends heavily on the solver.** The benchmark against
+  `talent_scheduling_alt.mzn` was done on an earlier version of `base.mzn`
+  (no symmetry breaking / redundant constraints / search annotation) with
+  Gecode 6.2.0 and is no longer representative; those were later added
+  (next section). Current measurements are in "Results" below.
 
 ## Performance optimizations (added after benchmarking against the reference model)
 
@@ -176,15 +172,31 @@ behaviour when travel cost is absent.
 ## Known packaging note
 On some MiniZinc/Gecode apt packages there's a version mismatch between
 Gecode's bundled global-constraint redefinitions and the standard library,
-producing a `global_cardinality` type error. `proj.py` already works
-around this with the `-G std` flag when invoking MiniZinc. If you install
-the official 2.10.1 bundle from minizinc.org instead of via apt, you
-likely won't need this workaround, but it's harmless either way.
+producing a `global_cardinality` type error. If you hit it, pass
+`--std-globals` to `proj.py`. It is off by default because `-G std`
+decomposes `all_different`, which removes Chuffed's native version.
+
+## Results (MiniZinc 2.10.1, this machine)
+| Model / instance | Solver | Result |
+|---|---|---|
+| base, Film2 | Gecode | no proof in 2 min, best 130 |
+| base, Film2 | Chuffed | **87 proved**, ~40 s |
+| extended, Film2, travel = 0 | Chuffed | 87 proved (87 + 0), ~59 s |
+| extended, tradeoff_demo | Chuffed | 85 proved (55 + 30), 0.2 s |
+| base, Film1 (20 scenes) | Chuffed | 210 best in 150 s, not proved |
+| extended, Film2 with travel (13 locations) | Chuffed | 136 best in 3 min, not proved |
+
+## Use of AI tools (mandatory declaration)
+- Claude Code (Anthropic) was used to review the models/README, run the
+  tests above, add the `--time-limit`/`--solver`/status options to
+  `proj.py`, and update this README with the measured results.
+- [TODO group: list any other AI/web resources used and how, e.g. for
+  writing the models, and describe them in the video too.]
 
 ## Files
 - `models/base.mzn` — CSPLib prob039 base model
 - `models/extended.mzn` — extended model with locations/travel
-- `data/example_instance.json` — example instance (6 scenes, 4 actors, 2 locations)
+- `data/*.json` — instances (film1, film2, film2_ext, film2_ext_zero, tradeoff_demo); `data/rehearsal.dzn` is the raw CSPLib data (not read by `proj.py`)
 - `proj.py` — pipeline: instance -> .dzn -> solve -> parse -> readable schedule
 
 ## For the 1-page PDF writeup
@@ -193,14 +205,15 @@ likely won't need this workaround, but it's harmless either way.
   travel cost, via a new `loc`/`travel` data and objective term.
 - Concrete trade-off example (`data/tradeoff_demo.json`, 5 scenes, 2
   actors): the extended model's optimal schedule has
-  `TOTAL_ACTOR_COST=55, TOTAL_TRAVEL_COST=30, TOTALCOST=85`. [Falta
-  confirmar: correr a mesma instância minimizando SÓ o actor cost — se
-  der um total > 85, isso prova que a junção dos dois objetivos compensa
-  e não é só o modelo a "aceitar" o ótimo do actor cost por acaso.]
-- Multi-objective strategy: name and justify the approach taken
-  (lexicographic vs. Pareto vs. weighted sum — see project notes) for
-  combining actor cost and travel cost, since the extension optimizes
-  more than one criterion.
+  `TOTAL_ACTOR_COST=55, TOTAL_TRAVEL_COST=30, TOTALCOST=85`. Minimizing
+  only the actor cost (travel matrix set to 0) gives actor cost 0 with
+  order 1,3,2,4,5, but under the real travel matrix that order costs
+  90+10+0+10 = 110 travel, total 110 > 85. So the joint objective really
+  changes the optimum.
+- Multi-objective strategy: weighted sum with equal weights
+  (`totalCost = totalActorCost + totalTravelCost`); both costs are in the
+  same monetary unit so a plain sum is the natural scalarization. No
+  Pareto front or lexicographic order is computed.
 - Online MiniZinc model declaration: state explicitly that
   `talent_scheduling_alt.mzn` (MiniZinc/minizinc-benchmarks) and
   `talent.mzn` (hakank.org) were found and compared against, but not

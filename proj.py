@@ -63,16 +63,24 @@ def encode_dzn(instance: dict, model: str) -> str:
 # --------------------------------------------------------------------
 # Step 3: invoke MiniZinc
 # --------------------------------------------------------------------
-def run_minizinc(model_path: Path, dzn_path: Path, solver: str = "gecode") -> str:
-    # -G std avoids a known packaging mismatch on some systems where a
-    # solver's bundled global-constraint redefinitions (e.g. Gecode's)
-    # are out of sync with the installed MiniZinc standard library.
-    cmd = ["minizinc", "-G", "std", "--solver", solver, "--time-limit", "1800000", str(model_path), str(dzn_path)]
+def run_minizinc(model_path: Path, dzn_path: Path, solver: str = "chuffed",
+                 time_limit: int = 60, std_globals: bool = False):
+    """Run MiniZinc; returns (stdout, proved_optimal).
+
+    On timeout MiniZinc still prints the best solution found so far but
+    omits the '==========' optimality marker.
+    """
+    cmd = ["minizinc", "--solver", solver, "--time-limit", str(time_limit * 1000)]
+    if std_globals:
+        # Works around a packaging mismatch on some apt installs where a
+        # solver's bundled globals are out of sync with the std library.
+        cmd += ["-G", "std"]
+    cmd += [str(model_path), str(dzn_path)]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         print("MiniZinc failed:", result.stderr, file=sys.stderr)
         sys.exit(1)
-    return result.stdout
+    return result.stdout, "==========" in result.stdout
 
 
 # --------------------------------------------------------------------
@@ -96,6 +104,27 @@ def parse_output(raw: str) -> dict:
             if match:
                 fields[key] = int(match.group())
     return fields
+
+
+def compute_cost(instance: dict, model: str, order) -> tuple:
+    """Recompute (actor_cost, travel_cost) of a schedule independently of the solver."""
+    d, c, ia = instance["d"], instance["c"], instance["ia"]
+    n = len(order)
+    actor_cost = 0
+    for a in range(len(c)):
+        slots = [i for i, sc in enumerate(order) if ia[a][sc - 1]]
+        if not slots:
+            continue
+        first, last = slots[0], slots[-1]
+        idle = sum(d[order[i] - 1] for i in range(first, last + 1)
+                   if not ia[a][order[i] - 1])
+        actor_cost += c[a] * idle
+    travel_cost = 0
+    if model == "extended":
+        loc, travel = instance["loc"], instance["travel"]
+        travel_cost = sum(travel[loc[order[i] - 1] - 1][loc[order[i + 1] - 1] - 1]
+                          for i in range(n - 1))
+    return actor_cost, travel_cost
 
 
 def print_schedule(instance: dict, model: str, fields: dict) -> None:
@@ -128,7 +157,14 @@ def main():
         "--model", choices=["base", "extended"], default="extended",
         help="Which model to run (base = CSPLib prob039, extended = + locations/travel)"
     )
-    parser.add_argument("--solver", default="gecode", help="MiniZinc solver to use")
+    parser.add_argument("--solver", default="chuffed",
+                        help="MiniZinc solver to use (default: chuffed)")
+    parser.add_argument("--time-limit", type=int, default=60,
+                        help="Solver time limit in seconds (default: 60)")
+    parser.add_argument("--std-globals", action="store_true",
+                        help="Pass -G std to MiniZinc (only if you hit a globals type error)")
+    parser.add_argument("--verbose", action="store_true",
+                        help="Also print the raw solver output to stderr")
     args = parser.parse_args()
 
     instance = load_instance(args.instance)
@@ -141,10 +177,24 @@ def main():
         dzn_path = Path(tmp.name)
 
     try:
-        raw_output = run_minizinc(model_path, dzn_path, args.solver)
-        print(raw_output, file=sys.stderr)
+        raw_output, optimal = run_minizinc(
+            model_path, dzn_path, args.solver, args.time_limit, args.std_globals)
+        if args.verbose:
+            print(raw_output, file=sys.stderr)
         fields = parse_output(raw_output)
+        if "ORDER" not in fields:
+            print(f"No solution found within {args.time_limit}s "
+                  "(or the instance is unsatisfiable).")
+            sys.exit(2)
         print_schedule(instance, args.model, fields)
+        actor, travel = compute_cost(instance, args.model, fields["ORDER"])
+        ok = actor + travel == fields.get("TOTALCOST")
+        print(f"Independent check: recomputed cost {actor + travel} "
+              + ("matches the solver." if ok else "DOES NOT MATCH the solver!"))
+        if not ok:
+            sys.exit(3)
+        print("Status: " + ("OPTIMAL (proved)" if optimal else
+              f"best found within {args.time_limit}s (optimality not proved)"))
     finally:
         dzn_path.unlink(missing_ok=True)
 
