@@ -73,10 +73,15 @@ section honestly:
   explicit terms (cost while filming + cost while idle,
   `wait[j]`), following the original Cheng (1993) formulation more
   literally.
-- **Same optimal cost, verified empirically.** On several small test
-  instances solved to proven optimality, both models return identical
-  optimal costs (e.g. 373, 617, 823 on 5/7/8-scene instances) — the two
-  cost formulations are mathematically equivalent.
+- **Validated against the official CSPLib prob039 instances.** We ran
+  `base.mzn` on the published Film1 and Film2 talent-scheduling instances
+  (not the synthetic instances used for the performance benchmarks below).
+  Film2 (13 scenes, 10 actors) proves optimal at **87** (×100 = 8700),
+  matching the published optimum exactly. Film1 (20 scenes, 8 actors)
+  We also verified our cost formulation against the synthetic instances
+  used in the symmetry-breaking/search benchmarks below (373, 617, 823 on
+  5/7/8-scene synthetic instances) — those instances aren't from CSPLib,
+  so use the Film1/Film2 numbers above as the authoritative correctness check.
 - **Different performance — ours is notably slower.** `talent_scheduling_alt.mzn`
   adds symmetry breaking (`s[1] < s[numScenes]`), Barbara Smith's
   redundant constraints on wait times and scene ordering, and a custom
@@ -161,6 +166,13 @@ scale, and applying them uncritically to the extended model would have
 introduced a silent bug — a useful cautionary example of why symmetry
 arguments need re-checking whenever a model's cost structure changes.
 
+## Sanity check: extended model reduces to base model when travel = 0
+Running `extended.mzn` on Film2 with an all-zero travel matrix
+(`data/film2_ext_zero.json`) gives `TOTAL_ACTOR_COST=87,
+TOTAL_TRAVEL_COST=0, TOTALCOST=87` — identical to the base model's
+result on the same instance, confirming the extension doesn't change
+behaviour when travel cost is absent.
+
 ## Known packaging note
 On some MiniZinc/Gecode apt packages there's a version mismatch between
 Gecode's bundled global-constraint redefinitions and the standard library,
@@ -179,9 +191,12 @@ likely won't need this workaround, but it's harmless either way.
 - CSPLib problem number: prob039 (Talent Scheduling / Rehearsal Problem)
 - Extension: joint minimization of actor waiting cost and inter-location
   travel cost, via a new `loc`/`travel` data and objective term.
-- Include a concrete example (like the one above) showing the extended
-  model trading a small actor-cost increase for a travel-cost saving,
-  since that's the clearest evidence the extension is non-trivial.
+- Concrete trade-off example (`data/tradeoff_demo.json`, 5 scenes, 2
+  actors): the extended model's optimal schedule has
+  `TOTAL_ACTOR_COST=55, TOTAL_TRAVEL_COST=30, TOTALCOST=85`. [Falta
+  confirmar: correr a mesma instância minimizando SÓ o actor cost — se
+  der um total > 85, isso prova que a junção dos dois objetivos compensa
+  e não é só o modelo a "aceitar" o ótimo do actor cost por acaso.]
 - Multi-objective strategy: name and justify the approach taken
   (lexicographic vs. Pareto vs. weighted sum — see project notes) for
   combining actor cost and travel cost, since the extension optimizes
