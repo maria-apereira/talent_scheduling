@@ -3,8 +3,11 @@
 ## Problem
 Given a set of scenes (each needing certain actors and having a duration)
 and a daily cost per actor, find a shooting order that minimizes the total
-cost of keeping actors on set, paid from their first to last scheduled
-scene inclusive of any waiting days in between.
+cost of keeping actors on set. Each actor is paid from their first to their
+last scheduled scene, but only the **waiting (idle) days** in between count
+as cost, as in CSPLib prob039: `actorCost[a] = c[a] * (span of a - days a
+works)`. The days an actor works are a constant, so they do not change which
+order is optimal.
 
 ## Extension
 Each scene also has a filming **location**, and moving the crew between
@@ -136,9 +139,7 @@ instead of comparing the two actor indices `k < l` to avoid duplicate
 symmetric pairs. This typo makes the constraint unsound on some
 instances, pruning away the true optimum. Fixing `k < j` to `k < l`
 made the model correctly converge to the same (lower, correct) optimal
-cost we had found independently. This is a good, concrete thing to
-mention in the video as evidence of having actually understood and
-stress-tested the models compared, not just skimmed them.
+cost we had found independently.
 
 **3. A symmetry-breaking constraint that's valid for `base.mzn` is
 *not* valid for `extended.mzn`.** We initially added the same
@@ -154,13 +155,6 @@ constraint and search annotation, which are still sound and give a real
 speed-up without this risk (e.g. 3260 → 2752 within the same 15 s
 budget on an 11-scene test instance, both otherwise unproven within that
 budget).
-
-**Takeaway for the writeup/video:** solution quality (optimal cost) was
-correct from the start; performance needed genuine CP techniques
-(symmetry breaking, redundant/implied constraints, search strategy) to
-scale, and applying them uncritically to the extended model would have
-introduced a silent bug — a useful cautionary example of why symmetry
-arguments need re-checking whenever a model's cost structure changes.
 
 ## Sanity check: extended model reduces to base model when travel = 0
 Running `extended.mzn` on Film2 with an all-zero travel matrix
@@ -190,8 +184,10 @@ decomposes `all_different`, which removes Chuffed's native version.
 - Claude Code (Anthropic) was used to review the models/README, run the
   tests above, add the `--time-limit`/`--solver`/status options to
   `proj.py`, and update this README with the measured results.
-- [TODO group: list any other AI/web resources used and how, e.g. for
-  writing the models, and describe them in the video too.]
+- Web resources: the public MiniZinc models `talent_scheduling_alt.mzn`
+  (MiniZinc benchmarks) and `talent.mzn` (hakank.org) were only compared
+  against after our models were written; they were not used as a basis
+  (see the comparison section above).
 
 ## Files
 - `models/base.mzn` — CSPLib prob039 base model
@@ -199,30 +195,21 @@ decomposes `all_different`, which removes Chuffed's native version.
 - `data/*.json` — instances (film1, film2, film2_ext, film2_ext_zero, tradeoff_demo); `data/rehearsal.dzn` is the raw CSPLib data (not read by `proj.py`)
 - `proj.py` — pipeline: instance -> .dzn -> solve -> parse -> readable schedule
 
-## For the 1-page PDF writeup
-- CSPLib problem number: prob039 (Talent Scheduling / Rehearsal Problem)
-- Extension: joint minimization of actor waiting cost and inter-location
-  travel cost, via a new `loc`/`travel` data and objective term.
-- Concrete trade-off example (`data/tradeoff_demo.json`, 5 scenes, 2
-  actors): the extended model's optimal schedule has
-  `TOTAL_ACTOR_COST=55, TOTAL_TRAVEL_COST=30, TOTALCOST=85`. Minimizing
-  only the actor cost (travel matrix set to 0) gives actor cost 0 with
-  order 1,3,2,4,5, but under the real travel matrix that order costs
-  90+10+0+10 = 110 travel, total 110 > 85. So the joint objective really
-  changes the optimum.
-- Multi-objective strategy: weighted sum with equal weights
-  (`totalCost = totalActorCost + totalTravelCost`); both costs are in the
-  same monetary unit so a plain sum is the natural scalarization. No
-  Pareto front or lexicographic order is computed.
-- Online MiniZinc model declaration: state explicitly that
-  `talent_scheduling_alt.mzn` (MiniZinc/minizinc-benchmarks) and
-  `talent.mzn` (hakank.org) were found and compared against, but not
-  used as a basis for our implementation — see the comparison section
-  above for the full analysis (same paradigm, different cost encoding,
-  same optimal cost, weaker search performance on larger instances,
-  and a genuine bug we found and diagnosed in the reference model).
-- Worth highlighting in the video: the reference-model bug we found
-  (Section "Performance optimizations", point 2) and the
-  base-vs-extended symmetry-breaking pitfall (point 3) — both show
-  hands-on verification, not just reading the models.
-# talent_scheduling
+## Multi-objective strategy
+The extended model combines two criteria, actor waiting cost and travel
+cost, with a **weighted sum with equal weights**
+(`totalCost = totalActorCost + totalTravelCost`). Both costs are in the same
+monetary unit, so their sum is the real total production cost and needs no
+arbitrary weights. A lexicographic order would let one criterion dominate
+(e.g. ignore any travel saving once actor cost is minimal), and a Pareto
+front would give many solutions with no natural way to pick one, when the
+goal is a single cheapest schedule. The weighted sum finds the true minimum
+total cost, and the `tradeoff_demo` instance shows the criteria really
+conflict (actor-only optimum costs 110 in travel; joint optimum is 85).
+
+## Trade-off example (`data/tradeoff_demo.json`, 5 scenes, 2 actors)
+The extended model's optimal schedule has `TOTAL_ACTOR_COST=55,
+TOTAL_TRAVEL_COST=30, TOTALCOST=85`. Minimizing only the actor cost gives
+actor cost 0 with order 1,3,2,4,5, but under the real travel matrix that
+order costs 90+10+0+10 = 110 travel, so the joint objective changes the
+optimum.
