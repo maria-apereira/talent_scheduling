@@ -59,6 +59,7 @@ constraint forall(a in Actors)(
 constraint seq[1] < seq[numScenes];
 
 solve :: int_search(seq, first_fail, indomain_min, complete)
+    :: restart_luby(100)
     minimize totalCost;
 
 output [
